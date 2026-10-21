@@ -1,0 +1,17 @@
+// Hourly aggregate per integration & customer (ADX update policy / scheduled function)
+.create-or-alter function HourlyAgg(startTime:datetime, endTime:datetime) {
+  RawLogs
+  | where timestamp between (startTime .. endTime)
+  | extend failed = is_timeout == true or http_status >= 500 or isnotempty(app_error_code)
+  | summarize total = count(), failed = countif(failed), timeouts = countif(is_timeout == true),
+              p95_latency_ms = percentile(iff(failed, real(null), latency_ms), 95)
+      by window_start = bin(timestamp, 1h), integration, customer_id
+  | extend availability = 100.0 * (total - failed) / total
+}
+// Same-hour 14-day baseline for availability (mean +/- 2 sd) - mirrors app/engine.py baseline()
+HourlyAggStore
+| where window_start between (ago(14d) .. now()) and hourofday(window_start) == hourofday(now())
+| summarize base_avail = avg(availability), sd = stdev(availability),
+            base_p95 = avg(p95_latency_ms) by integration
+| extend band_lo = base_avail - 2*sd, band_hi = base_avail + 2*sd
+// Retention: .alter-merge table RawLogs policy retention softdelete = 60d

@@ -1,0 +1,61 @@
+# Weights, SLA tiers and thresholds live in config (deck slides 3, 4, 6).
+# Weights 40/25/15/15/5 are PROPOSED and need BrightLine sign-off.
+settings:
+  score_weights: {availability: 0.80, latency: 0.20}
+  healthy_min: 90          # Healthy 90+
+  unhealthy_below: 70      # At risk 70-89, Unhealthy < 70
+  baseline_days: 14        # same-hour rolling baseline
+  min_history_days: 3      # below this -> cold-start baseline
+  avail_zero_drop_pts: 50  # availability score hits 0 when this many points below baseline
+  latency_ok_ratio: 1.25   # P95 <= 1.25 x baseline -> full latency score
+  latency_zero_ratio: 4.0  # P95 >= 4 x baseline -> zero latency score
+  noisy_customer_share: 0.5
+  escalate_below_sla_pct: 20   # "20% below SLA target" read as escalation trigger (to confirm)
+  retention_days: 60
+  timeout_ms: 30000
+integrations:
+  payroll:
+    source_name: "ADP Payroll Sync"
+    display: Payroll
+    weight: 0.40
+    sla_tier: high_availability
+    sla_target: 99.9
+    red_rule: true
+    alert_channel: teams-ops-critical
+  directory:
+    source_name: "Workday Directory Sync"
+    display: Directory Sync
+    weight: 0.25
+    sla_tier: bau
+    sla_target: 99.5
+    red_rule: true
+    alert_channel: teams-ops
+  esignature:
+    source_name: "DocuSign Envelope API"
+    display: E-signature
+    weight: 0.15
+    sla_tier: bau
+    sla_target: 99.5
+    red_rule: false
+    alert_channel: teams-ops
+  ats:
+    source_name: "Greenhouse ATS Sync"
+    display: ATS
+    weight: 0.15
+    sla_tier: bau
+    sla_target: 99.5
+    red_rule: false
+    alert_channel: teams-ops
+  notifications:
+    source_name: "Slack Notifications"
+    display: Notifications
+    weight: 0.05
+    sla_tier: high_availability
+    sla_target: 99.9
+    red_rule: false
+    alert_channel: teams-ops
+roles:
+  operations: {see: [overall, integrations, timeline, customers, alerts, baseline]}
+  support:    {see: [overall, integrations, customers, alerts]}
+  executive:  {see: [overall, integrations]}
+  engineering: {see: [overall, integrations, timeline, customers, alerts, baseline, raw]}

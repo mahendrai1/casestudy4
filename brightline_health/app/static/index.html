@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BrightLine HR · Integration Health</title>
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--ink:#1c2733;--mute:#6b7785;--line:#e3e8ee;--ok:#1f9d6b;--warn:#e0902a;--bad:#d64545;--teal:#2a9d9f}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 24px;background:#12304a;color:#fff}
+header h1{font-size:17px;margin:0}header small{opacity:.75}
+select,button{font:inherit;padding:5px 9px;border-radius:6px;border:1px solid #cfd6de;background:#fff}
+button{cursor:pointer}main{padding:20px 24px;max-width:1280px;margin:auto}
+.banner{background:#fff6e5;border:1px solid #f0d49a;padding:8px 12px;border-radius:8px;margin-bottom:14px;font-size:13px}
+.overall{display:flex;align-items:center;gap:22px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:16px}
+.big{font-size:54px;font-weight:700;line-height:1}.pill{display:inline-block;padding:2px 10px;border-radius:999px;color:#fff;font-weight:600;font-size:12px}
+.Healthy,.Green{background:var(--ok)}.Atrisk,.Amber{background:var(--warn)}.Unhealthy,.Red{background:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:pointer;border-top:4px solid var(--line)}
+.tile.sel{outline:2px solid #12304a}.tile.Healthy{border-top-color:var(--ok)}.tile.Atrisk{border-top-color:var(--warn)}.tile.Unhealthy{border-top-color:var(--bad)}
+.tile .n{font-size:30px;font-weight:700}.tile .m{color:var(--mute);font-size:12px}
+.row{display:grid;grid-template-columns:2fr 1fr;gap:14px}@media(max-width:900px){.row{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.card h3{margin:0 0 8px;font-size:14px}table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}th{color:var(--mute);font-weight:600}
+.alert{padding:6px 8px;border-left:4px solid var(--bad);background:#fdf0f0;margin-bottom:6px;border-radius:4px;font-size:13px}
+.alert.high{border-color:var(--warn);background:#fff6e5}.mute{color:var(--mute);font-size:12px}
+svg text{font-size:10px;fill:#6b7785}
+</style></head><body>
+<header><div><h1>BrightLine HR · Integration Health</h1><small id="refreshed"></small></div>
+<div><label>View&nbsp;<select id="role"><option>operations</option><option>support</option><option>executive</option><option>engineering</option></select></label>
+&nbsp;<label>Hour&nbsp;<select id="hour"></select></label>
+&nbsp;<button id="seed" title="Adds synthetic 14-day history to demo the dynamic baseline">Demo 14-day baseline</button>
+<button id="reload">Reset sample</button></div></header>
+<main>
+<div id="banner"></div>
+<div class="overall" id="overall"></div>
+<div class="grid" id="tiles"></div>
+<div class="row"><div>
+<div class="card"><h3 id="chartTitle">Latency vs expected range</h3><div id="chart"></div>
+<div class="mute">Teal band = expected P95 range from the baseline. Dots = 5-minute requests: red = failure/timeout, blue = success. Y axis = latency (ms, log scale).</div></div>
+<div class="card" id="trendCard"><h3>Availability trend (last 24 h) vs expected range</h3><div id="trend"></div></div>
+</div><div>
+<div class="card" id="alertsCard"><h3>Alerts (Teams, dry-run)</h3><div id="alerts"></div></div>
+<div class="card" id="custCard"><h3 id="custTitle">Failures</h3><div id="cust"></div></div>
+<div class="card" id="baseCard"><h3>Score breakdown</h3><div id="base"></div></div>
+</div></div></main>
+<script>
+const $=id=>document.getElementById(id);let sel=null,data=null;
+const j=async(u,o)=>{const r=await fetch(u,o);if(!r.ok)throw new Error(await r.text());return r.json()};
+async function hours(){const h=await j('/api/hours');$('hour').innerHTML=h.map(x=>`<option>${x}</option>`).join('');}
+async function load(){
+  data=await j(`/api/health?role=${$('role').value}&hour=${encodeURIComponent($('hour').value)}`);
+  $('refreshed').textContent=`Window ${data.window_start} UTC · hourly · role: ${data.role}`;
+  const o=data.overall;
+  const cold=data.integrations.some(i=>(i.baseline_mode||'').startsWith('cold'));
+  const syn=data.integrations.some(i=>(i.baseline_mode||'').includes('synthetic'));
+  $('banner').innerHTML=cold?'<div class="banner"><b>Cold-start baseline:</b> the sample file holds a single hour, so no 14-day same-hour history exists yet. Baseline = SLA target (availability) and in-hour median (latency). Use “Demo 14-day baseline” to see the dynamic path with <b>synthetic</b> history.</div>':
+     syn?'<div class="banner"><b>Synthetic demo history</b> is driving the baseline. Not real data.</div>':'';
+  $('overall').innerHTML=`<div><div class="mute">OVERALL · weighted score</div><div class="big">${o.score}</div></div>
+   <div><span class="pill ${o.colour}">${o.colour.toUpperCase()}</span> <span class="pill ${o.status.replace(' ','')}">${o.status}</span>
+   <div class="mute" style="margin-top:6px">${o.red_rule_triggered_by.length?'Red rule: '+o.red_rule_triggered_by.join(', ')+' Unhealthy':'No red-rule integration Unhealthy'}</div></div>`;
+  $('tiles').innerHTML=data.integrations.map(i=>`<div class="tile ${i.status.replace(' ','')} ${sel===i.key?'sel':''}" onclick="pick('${i.key}')">
+   <div class="m">${i.display} · ${(i.weight*100)|0}% · ${i.sla_tier.replace('_',' ')}</div><div class="n">${i.score}</div>
+   <span class="pill ${i.status.replace(' ','')}">${i.status}</span><div class="m" style="margin-top:6px">Avail ${i.availability}% · P95 ${i.p95_latency_ms==null?'–':(i.p95_latency_ms/1000).toFixed(2)+' s'}</div></div>`).join('');
+  const see=k=>data.integrations[0]&&k in data.integrations[0];
+  $('alertsCard').style.display=data.alerts?'':'none';$('custCard').style.display=data.integrations[0]&&data.integrations[0].failure_breakdown?'':'none';
+  $('baseCard').style.display=see('avail_score')?'':'none';$('chart').parentElement.style.display=see('timeline')?'':'none';$('trendCard').style.display=see('timeline')?'':'none';
+  if(data.alerts)$('alerts').innerHTML=data.alerts.length?data.alerts.map(a=>`<div class="alert ${a.severity}">${a.message}<div class="mute">${a.channel} · ${a.delivered?'delivered':'dry-run'}</div></div>`).join(''):'<span class="mute">No alerts</span>';
+  if(!sel||!data.integrations.find(i=>i.key===sel))sel=data.integrations[0].key;
+  await detail();
+}
+function pick(k){sel=k;load()}
+async function detail(){
+  const i=data.integrations.find(x=>x.key===sel);if(!i)return;
+  if(i.failure_breakdown){const f=i.failure_breakdown;
+    $('custTitle').textContent='Failures · '+i.display;
+    $('cust').innerHTML=`<div class="mute">${f.failed} failed of ${f.total} (${f.timeouts} timeouts)</div>`+
+     (f.note?`<p class="mute">${f.note}</p>`:`<table><tr><th>Customer</th><th>Failures</th><th>Share</th></tr>${f.top_customers.map(c=>`<tr><td>${c.customer_id}</td><td>${c.failures}</td><td>${(c.share*100).toFixed(0)}%</td></tr>`).join('')}</table>`)+
+     (f.flagged?`<p><b>Noisy customer ${f.flagged}</b> · score without: ${f.score_without_customer}</p>`:'');}
+  if(i.avail_score!==undefined)$('base').innerHTML=`<table><tr><td>Availability score (80%)</td><td>${i.avail_score}</td></tr><tr><td>Latency score (20%)</td><td>${i.latency_score}</td></tr>
+    <tr><td>Baseline availability</td><td>${i.base_availability}%</td></tr><tr><td>Baseline P95</td><td>${i.base_p95_ms==null?'–':Math.round(i.base_p95_ms)+' ms'}</td></tr>
+    <tr><td>Baseline mode</td><td>${i.baseline_mode}</td></tr></table>`;
+  if(i.timeline){$('chartTitle').textContent=i.display+' · request latency in this hour, vs expected P95 range';drawTimeline(i);
+    const t=await j(`/api/trend/${i.key}?hour=${encodeURIComponent(data.window_start)}`);drawTrend(t,i);}
+}
+function drawTimeline(i){
+  const W=700,H=200,L=44,R=10,T=10,B=24,pts=i.timeline;if(!pts.length)return;
+  const t0=new Date(pts[0].ts).getTime(),t1=new Date(pts[pts.length-1].ts).getTime()||t0+1;
+  const lg=v=>Math.log10(Math.max(v,10)),lo=1,hi=Math.log10(40000);
+  const x=t=>L+(new Date(t).getTime()-t0)/(t1-t0||1)*(W-L-R),y=v=>T+(1-(lg(v)-lo)/(hi-lo))*(H-T-B);
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%">`;
+  [10,100,1000,10000].forEach(v=>s+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="#eef1f4"/><text x="4" y="${y(v)+3}">${v>=1000?v/1000+'s':v+'ms'}</text>`);
+  const base=i.base_p95_ms;if(base)s+=`<rect x="${L}" y="${y(base*1.25)}" width="${W-L-R}" height="${Math.max(2,y(base/1.25)-y(base*1.25))}" fill="#2a9d9f" opacity=".18"/>`;
+  s+=`<polyline fill="none" stroke="#e0902a" stroke-width="1.5" points="${pts.map(p=>x(p.ts)+','+y(p.latency_ms)).join(' ')}"/>`;
+  pts.forEach(p=>s+=`<circle cx="${x(p.ts)}" cy="${y(p.latency_ms)}" r="4.5" fill="${p.failed?'#d64545':'#3b7dd8'}"><title>${p.ts.slice(11,16)} · ${p.timeout?'timeout':p.http_status} · ${p.latency_ms} ms</title></circle>`);
+  pts.forEach((p,k)=>{if(k%2==0)s+=`<text x="${x(p.ts)-10}" y="${H-6}">${p.ts.slice(11,16)}</text>`});
+  $('chart').innerHTML=s+'</svg>';
+}
+function drawTrend(t,i){
+  const W=700,H=140,L=44,R=10,T=10,B=22;if(!t.length){$('trend').innerHTML='';return}
+  const lo=Math.min(...t.map(p=>p.availability),i.band?i.band[0]:100)-1,hi=100.2;
+  const x=k=>L+(t.length>1?k/(t.length-1):.5)*(W-L-R),y=v=>T+(1-(v-lo)/(hi-lo))*(H-T-B);
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%">`;
+  if(i.band)s+=`<rect x="${L}" y="${y(i.band[1])}" width="${W-L-R}" height="${Math.max(2,y(i.band[0])-y(i.band[1]))}" fill="#2a9d9f" opacity=".18"/>`;
+  s+=`<polyline fill="none" stroke="#e0902a" stroke-width="2" points="${t.map((p,k)=>x(k)+','+y(p.availability)).join(' ')}"/>`;
+  t.forEach((p,k)=>s+=`<circle cx="${x(k)}" cy="${y(p.availability)}" r="3" fill="${p.synthetic?'#aab4bf':'#12304a'}"><title>${p.window_start.slice(5,16)} · ${p.availability}%${p.synthetic?' (synthetic)':''}</title></circle>`);
+  s+=`<text x="4" y="${y(100)+3}">100%</text><text x="4" y="${y(lo)}">${lo.toFixed(0)}%</text>`;
+  $('trend').innerHTML=s+'</svg><div class="mute">Grey = synthetic demo history.</div>';
+}
+$('role').onchange=load;$('hour').onchange=load;
+$('seed').onclick=async()=>{await j('/api/admin/seed-demo-history',{method:'POST'});await load()};
+$('reload').onclick=async()=>{await j('/api/admin/reload-sample',{method:'POST'});await hours();await load()};
+hours().then(load);
+</script></body></html>
